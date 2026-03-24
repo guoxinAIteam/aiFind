@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.database import engine, Base
 from backend.models import *  # noqa: ensure all models registered
 from backend.seed import seed
-from backend.routers import dashboard, flows, params, monitor, knowledge, manual
+from backend.routers import dashboard, flows, params, monitor, knowledge, manual, skills, auth
 
 Base.metadata.create_all(bind=engine)
 seed()
@@ -34,6 +34,8 @@ app.include_router(params.router)
 app.include_router(monitor.router)
 app.include_router(knowledge.router)
 app.include_router(manual.router)
+app.include_router(skills.router)
+app.include_router(auth.router)
 
 dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 if os.path.isdir(dist):
