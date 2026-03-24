@@ -5,6 +5,7 @@ import {
   Settings,
   Activity,
   BookOpen,
+  Library,
   Zap,
 } from "lucide-react";
 
@@ -14,6 +15,7 @@ const navItems = [
   { to: "/params", label: "参数管理", Icon: Settings },
   { to: "/monitor", label: "监控中心", Icon: Activity },
   { to: "/knowledge", label: "知识库", Icon: BookOpen },
+  { to: "/manual", label: "操作手册", Icon: Library },
 ];
 
 const PAGE_TITLES = {
@@ -22,6 +24,7 @@ const PAGE_TITLES = {
   "/params": "参数管理",
   "/monitor": "监控中心",
   "/knowledge": "知识库",
+  "/manual": "操作手册",
 };
 
 export default function Layout() {

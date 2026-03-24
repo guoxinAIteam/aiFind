@@ -7,6 +7,7 @@ const FlowManager = lazy(() => import("./pages/FlowManager"));
 const ParamManager = lazy(() => import("./pages/ParamManager"));
 const Monitor = lazy(() => import("./pages/Monitor"));
 const Knowledge = lazy(() => import("./pages/Knowledge"));
+const Manual = lazy(() => import("./pages/Manual"));
 
 function LoadingFallback() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="params" element={<ParamManager />} />
           <Route path="monitor" element={<Monitor />} />
           <Route path="knowledge" element={<Knowledge />} />
+          <Route path="manual" element={<Manual />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
