@@ -31,7 +31,13 @@ export const api = {
       request(`/flows/${taskId}/step/${step}/complete`, { method: "POST" }),
   },
   params: {
-    list: () => request("/params"),
+    list: (params = {}) => {
+      const sp = new URLSearchParams();
+      if (params.page != null) sp.set("page", String(params.page));
+      if (params.page_size != null) sp.set("page_size", String(params.page_size));
+      const qs = sp.toString();
+      return request(`/params${qs ? `?${qs}` : ""}`);
+    },
     get: (id) => request(`/params/${id}`),
     create: (data) => request("/params", { method: "POST", body: JSON.stringify(data) }),
     validate: (params) => request("/params/validate", { method: "POST", body: JSON.stringify({ params }) }),
@@ -39,20 +45,33 @@ export const api = {
       request("/params/recommend", { method: "POST", body: JSON.stringify({ table_name }) }),
   },
   monitor: {
-    events: (severity) => request(`/monitor/events${severity ? `?severity=${severity}` : ""}`),
+    events: (params = {}) => {
+      const sp = new URLSearchParams();
+      if (typeof params === "string") {
+        if (params) sp.set("severity", params);
+      } else if (params && typeof params === "object") {
+        if (params.severity) sp.set("severity", params.severity);
+        if (params.page != null) sp.set("page", String(params.page));
+        if (params.page_size != null) sp.set("page_size", String(params.page_size));
+      }
+      const qs = sp.toString();
+      return request(`/monitor/events${qs ? `?${qs}` : ""}`);
+    },
     metrics: (source) => request(`/monitor/metrics${source ? `?source=${source}` : ""}`),
     resolve: (id) => request(`/monitor/events/${id}/resolve`, { method: "POST" }),
     detectAnomaly: (metrics) =>
       request("/monitor/anomaly-detect", { method: "POST", body: JSON.stringify({ metrics }) }),
   },
   knowledge: {
-    list: (query) => {
+    list: (params = {}) => {
       const sp = new URLSearchParams();
-      if (typeof query === "string") {
-        if (query.trim()) sp.set("q", query.trim());
-      } else if (query && typeof query === "object") {
-        if (query.q?.trim()) sp.set("q", query.q.trim());
-        if (query.category) sp.set("category", query.category);
+      if (typeof params === "string") {
+        if (params.trim()) sp.set("q", params.trim());
+      } else if (params && typeof params === "object") {
+        if (params.q?.trim()) sp.set("q", params.q.trim());
+        if (params.category) sp.set("category", params.category);
+        if (params.page != null) sp.set("page", String(params.page));
+        if (params.page_size != null) sp.set("page_size", String(params.page_size));
       }
       const qs = sp.toString();
       return request(`/knowledge${qs ? `?${qs}` : ""}`);

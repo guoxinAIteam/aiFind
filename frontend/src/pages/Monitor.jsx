@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import Pagination from "../components/Pagination";
 import {
   Loader2,
   Activity,
@@ -105,6 +106,8 @@ export default function Monitor() {
   const [events, setEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(true);
   const [eventsError, setEventsError] = useState(null);
+  const [evPage, setEvPage] = useState(1);
+  const [evPageInfo, setEvPageInfo] = useState({ total: 0, total_pages: 1 });
 
   const [tab, setTab] = useState("Flink");
   const [metricsRaw, setMetricsRaw] = useState([]);
@@ -119,15 +122,20 @@ export default function Monitor() {
     setEventsLoading(true);
     setEventsError(null);
     try {
-      const data = await api.monitor.events(severity || undefined);
-      setEvents(Array.isArray(data) ? data : []);
+      const data = await api.monitor.events({ severity: severity || undefined, page: evPage, page_size: 10 });
+      if (data && data.items) {
+        setEvents(data.items);
+        setEvPageInfo({ total: data.total, total_pages: data.total_pages });
+      } else {
+        setEvents(Array.isArray(data) ? data : []);
+      }
     } catch (e) {
       setEventsError(e.message || "加载事件失败");
       setEvents([]);
     } finally {
       setEventsLoading(false);
     }
-  }, [severity]);
+  }, [severity, evPage]);
 
   useEffect(() => {
     loadEvents();
@@ -194,7 +202,10 @@ export default function Monitor() {
           <button
             key={key || "all"}
             type="button"
-            onClick={() => setSeverity(key)}
+            onClick={() => {
+              setSeverity(key);
+              setEvPage(1);
+            }}
             className={[
               "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
               severity === key
@@ -254,6 +265,11 @@ export default function Monitor() {
               </li>
             ))}
         </ul>
+        {!eventsLoading && !eventsError && (
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <Pagination page={evPage} totalPages={evPageInfo.total_pages} total={evPageInfo.total} pageSize={10} onPageChange={setEvPage} />
+          </div>
+        )}
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">

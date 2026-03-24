@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import Pagination from "../components/Pagination";
 import {
   AlertTriangle,
   BookOpen,
@@ -148,6 +149,8 @@ export default function Manual() {
   const [tab, setTab] = useState("flow");
   const [expanded, setExpanded] = useState(() => new Set(["step-1"]));
   const [opExpanded, setOpExpanded] = useState(() => new Set());
+  const [benchPage, setBenchPage] = useState(1);
+  const [scriptPage, setScriptPage] = useState(1);
 
   useEffect(() => {
     fetch("/api/manual")
@@ -169,6 +172,17 @@ export default function Manual() {
     () => normalizeBenchmark(benchmark),
     [benchmark],
   );
+
+  const benchPageSize = 10;
+  const benchTotal = benchmarkRows.length;
+  const benchTotalPages = Math.max(1, Math.ceil(benchTotal / benchPageSize));
+  const benchPagedRows = benchmarkRows.slice((benchPage - 1) * benchPageSize, benchPage * benchPageSize);
+
+  const scriptPageSize = 10;
+  const allScripts = samples?.scripts || [];
+  const scriptTotal = allScripts.length;
+  const scriptTotalPages = Math.max(1, Math.ceil(scriptTotal / scriptPageSize));
+  const pagedScripts = allScripts.slice((scriptPage - 1) * scriptPageSize, scriptPage * scriptPageSize);
 
   const stats = useMemo(() => {
     const stepCount = steps.length || 0;
@@ -663,7 +677,7 @@ export default function Manual() {
                       </td>
                     </tr>
                   ) : (
-                    benchmarkRows.map((row, ri) => {
+                    benchPagedRows.map((row, ri) => {
                       const dim =
                         row.dimension ??
                         row.能力维度 ??
@@ -688,7 +702,7 @@ export default function Manual() {
 
                       return (
                         <tr
-                          key={ri}
+                          key={`${benchPage}-${ri}`}
                           className="border-b border-slate-100 transition-colors duration-300 hover:bg-indigo-50/50 dark:border-slate-800 dark:hover:bg-indigo-950/20"
                         >
                           <td className="px-4 py-3 font-semibold text-slate-900 dark:text-white">
@@ -728,6 +742,11 @@ export default function Manual() {
                   )}
                 </tbody>
               </table>
+              {benchmarkRows.length > 0 && (
+                <div className="border-t border-slate-100 px-4 py-4 dark:border-slate-800">
+                  <Pagination page={benchPage} totalPages={benchTotalPages} total={benchTotal} pageSize={benchPageSize} onPageChange={setBenchPage} />
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -741,7 +760,7 @@ export default function Manual() {
             <div className="rounded-2xl border border-slate-200/90 bg-white/95 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/90">
               <h3 className="mb-3 text-base font-semibold text-slate-900 dark:text-white">脚本样例 ({samples?.script_count ?? 0})</h3>
               <div className="space-y-4">
-                {(samples?.scripts || []).map((s) => (
+                {pagedScripts.map((s) => (
                   <div key={s.name} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
                     <p className="text-sm font-semibold text-slate-900 dark:text-white">{s.name}</p>
                     <p className="mb-2 text-xs text-slate-500">{s.path}</p>
@@ -751,6 +770,11 @@ export default function Manual() {
                   </div>
                 ))}
               </div>
+              {allScripts.length > 0 && (
+                <div className="mt-4 border-t border-slate-100 pt-4 dark:border-slate-800">
+                  <Pagination page={scriptPage} totalPages={scriptTotalPages} total={scriptTotal} pageSize={scriptPageSize} onPageChange={setScriptPage} />
+                </div>
+              )}
             </div>
 
             <div className="rounded-2xl border border-slate-200/90 bg-white/95 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/90">

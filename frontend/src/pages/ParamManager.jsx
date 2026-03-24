@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import Pagination from "../components/Pagination";
 import {
   Sparkles,
   ShieldCheck,
@@ -74,6 +75,8 @@ export default function ParamManager() {
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState(null);
   const [expanded, setExpanded] = useState(() => new Set());
+  const [page, setPage] = useState(1);
+  const [pageInfo, setPageInfo] = useState({ total: 0, total_pages: 1 });
 
   const [recommendOpen, setRecommendOpen] = useState(false);
   const [tableName, setTableName] = useState("");
@@ -91,15 +94,20 @@ export default function ParamManager() {
     setListLoading(true);
     setListError(null);
     try {
-      const data = await api.params.list();
-      setTemplates(Array.isArray(data) ? data : []);
+      const data = await api.params.list({ page, page_size: 10 });
+      if (data && data.items) {
+        setTemplates(data.items);
+        setPageInfo({ total: data.total, total_pages: data.total_pages });
+      } else {
+        setTemplates(Array.isArray(data) ? data : []);
+      }
     } catch (e) {
       setListError(e.message || "加载失败");
       setTemplates([]);
     } finally {
       setListLoading(false);
     }
-  }, []);
+  }, [page]);
 
   useEffect(() => {
     loadTemplates();
@@ -420,6 +428,11 @@ export default function ParamManager() {
               );
             })}
         </div>
+        {!listLoading && !listError && (
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <Pagination page={page} totalPages={pageInfo.total_pages} total={pageInfo.total} pageSize={10} onPageChange={setPage} />
+          </div>
+        )}
       </section>
     </div>
   );

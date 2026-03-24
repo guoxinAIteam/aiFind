@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import Pagination from "../components/Pagination";
 import {
   Search,
   Loader2,
@@ -191,6 +192,8 @@ export default function Knowledge() {
   const [articles, setArticles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [page, setPage] = useState(1);
+  const [pageInfo, setPageInfo] = useState({ total: 0, total_pages: 1 });
   const [expandedId, setExpandedId] = useState(null);
   const [helpfulBusy, setHelpfulBusy] = useState(null);
 
@@ -209,12 +212,18 @@ export default function Knowledge() {
     return () => clearTimeout(t);
   }, [query]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedQ, category]);
+
   const listParams = useMemo(
     () => ({
       q: debouncedQ,
       ...(category ? { category } : {}),
+      page,
+      page_size: 10,
     }),
-    [debouncedQ, category],
+    [debouncedQ, category, page],
   );
 
   const loadList = useCallback(async () => {
@@ -222,7 +231,12 @@ export default function Knowledge() {
     setError(null);
     try {
       const data = await api.knowledge.list(listParams);
-      setArticles(Array.isArray(data) ? data : []);
+      if (data && data.items) {
+        setArticles(data.items);
+        setPageInfo({ total: data.total, total_pages: data.total_pages });
+      } else {
+        setArticles(Array.isArray(data) ? data : []);
+      }
     } catch (e) {
       setError(e.message || "加载失败");
       setArticles([]);
@@ -476,6 +490,11 @@ export default function Knowledge() {
             );
           })}
       </div>
+      {!loading && !error && (
+        <div className="mt-2">
+          <Pagination page={page} totalPages={pageInfo.total_pages} total={pageInfo.total} pageSize={10} onPageChange={setPage} />
+        </div>
+      )}
     </div>
   );
 }

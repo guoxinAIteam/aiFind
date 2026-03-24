@@ -16,6 +16,7 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "../api";
+import Pagination from "../components/Pagination";
 
 function formatTimeHm(iso) {
   if (!iso) return "—";
@@ -110,6 +111,7 @@ export default function Dashboard() {
   const [error, setError] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [metricsRaw, setMetricsRaw] = useState([]);
+  const [taskPage, setTaskPage] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,6 +137,12 @@ export default function Dashboard() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const n = dashboard?.recent_tasks?.length ?? 0;
+    const tp = Math.max(1, Math.ceil(n / 10));
+    setTaskPage((p) => (p > tp ? tp : p));
+  }, [dashboard]);
 
   const chartData = useMemo(() => {
     const rows = [...metricsRaw].reverse();
@@ -166,6 +174,10 @@ export default function Dashboard() {
 
   const recentTasks = dashboard?.recent_tasks ?? [];
   const recentEvents = dashboard?.recent_events ?? [];
+  const taskPageSize = 10;
+  const taskTotal = recentTasks.length;
+  const taskTotalPages = Math.max(1, Math.ceil(taskTotal / taskPageSize));
+  const pagedTasks = recentTasks.slice((taskPage - 1) * taskPageSize, taskPage * taskPageSize);
 
   return (
     <div className="mx-auto max-w-7xl space-y-8 px-4 py-8 sm:px-6 lg:px-8">
@@ -317,7 +329,7 @@ export default function Dashboard() {
                   </td>
                 </tr>
               ) : (
-                recentTasks.map((t) => {
+                pagedTasks.map((t) => {
                   const pct = Math.min(100, Math.max(0, Number(t.progress) || 0));
                   return (
                     <tr key={t.id} className="text-zinc-800 dark:text-zinc-200">
@@ -349,6 +361,11 @@ export default function Dashboard() {
             </tbody>
           </table>
         </div>
+        {recentTasks.length > 0 && (
+          <div className="mt-4 border-t border-zinc-100 pt-4 dark:border-zinc-800">
+            <Pagination page={taskPage} totalPages={taskTotalPages} total={taskTotal} pageSize={taskPageSize} onPageChange={setTaskPage} />
+          </div>
+        )}
       </section>
     </div>
   );
