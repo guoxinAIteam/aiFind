@@ -12,10 +12,21 @@ async function request(path, opts = {}) {
 export const api = {
   dashboard: () => request("/dashboard"),
   flows: {
-    list: () => request("/flows"),
+    list: (params = {}) => {
+      const sp = new URLSearchParams();
+      if (params.page != null) sp.set("page", String(params.page));
+      if (params.page_size != null) sp.set("page_size", String(params.page_size));
+      const qs = sp.toString();
+      return request(`/flows${qs ? `?${qs}` : ""}`);
+    },
     get: (id) => request(`/flows/${id}`),
     create: (data) => request("/flows", { method: "POST", body: JSON.stringify(data) }),
     execute: (id) => request(`/flows/${id}/execute`, { method: "POST" }),
+    confirmOperation: (taskId, stepOrder, body) =>
+      request(`/flows/${taskId}/step/${stepOrder}/confirm`, {
+        method: "POST",
+        body: JSON.stringify(body ?? {}),
+      }),
     completeStep: (taskId, step) =>
       request(`/flows/${taskId}/step/${step}/complete`, { method: "POST" }),
   },
