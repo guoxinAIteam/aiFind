@@ -43,6 +43,27 @@ const DEFAULT_FORM = {
   mc_table_name: "",
 };
 
+function buildFieldListCsv(fields) {
+  if (!Array.isArray(fields)) return "";
+  return fields
+    .map((f) => String(f?.en_name || "").trim())
+    .filter(Boolean)
+    .join(",");
+}
+
+function buildIndexCsv(indexes) {
+  if (!Array.isArray(indexes)) return "";
+  return indexes
+    .map((x) => String(x).trim())
+    .filter((x) => x.length > 0)
+    .join(",");
+}
+
+function toLowerMcTableName(tableName) {
+  const t = String(tableName || "").trim();
+  return t ? t.toLowerCase() : "";
+}
+
 function normalizeListResponse(raw, page, pageSize) {
   if (Array.isArray(raw)) {
     const total = raw.length;
@@ -317,17 +338,104 @@ export default function FlowManager() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState(null);
 
+  const [docUploading, setDocUploading] = useState(false);
+  const [docError, setDocError] = useState(null);
+  const [docData, setDocData] = useState(null);
+  const [docQuery, setDocQuery] = useState("");
+  const [selectedDocTableIndex, setSelectedDocTableIndex] = useState("");
+
   const [sectionOpen, setSectionOpen] = useState(() => ({
+    doc: true,
     basic: true,
     cluster: true,
     hbase: false,
     kafka: false,
     schema: false,
+    schema_preview: true,
     export: false,
   }));
 
   const toggleSection = (id) => {
     setSectionOpen((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const docTableOptions = useMemo(() => {
+    const tables = docData?.tables;
+    if (!Array.isArray(tables)) return [];
+    const q = docQuery.trim().toLowerCase();
+    const opts = tables.map((t) => {
+      const section = t?.section ? String(t.section) : "";
+      const tableName = t?.table_name ? String(t.table_name) : "";
+      const cn = t?.chinese_name ? String(t.chinese_name) : "";
+      const label = `${section} ${tableName} ${cn}`.trim();
+      const value = String(t?.index ?? "");
+      return { value, label, raw: t };
+    });
+    if (!q) return opts;
+    return opts.filter((o) => o.label.toLowerCase().includes(q));
+  }, [docData, docQuery]);
+
+  const selectedDocTable = useMemo(() => {
+    const tables = docData?.tables;
+    if (!Array.isArray(tables)) return null;
+    const idx = Number(selectedDocTableIndex);
+    if (!Number.isFinite(idx)) return null;
+    return tables.find((t) => Number(t?.index) === idx) ?? null;
+  }, [docData, selectedDocTableIndex]);
+
+  const missingInfoList = useMemo(() => {
+    if (!selectedDocTable) return [];
+    const missing = [];
+    // 表单必填/常用，但文档通常不提供或不稳定提供的字段
+    if (!selectedDocTable?.file_name) missing.push("文件名（file_name）");
+    if (!selectedDocTable?.interface_id) missing.push("接口ID（interface_id）");
+    if (!selectedDocTable?.kafka_topic) missing.push("Kafka Topic（kafka_topic）");
+    if (!form.file_size_gb) missing.push("文件大小估算GB（file_size_gb）");
+    if (!form.init_date) missing.push("初始化日期（init_date）");
+    return missing;
+  }, [selectedDocTable, form.file_size_gb, form.init_date]);
+
+  const applyDocTableToForm = useCallback(
+    (t) => {
+      if (!t) return;
+      const fields = Array.isArray(t.fields) ? t.fields : [];
+      const globalCompression = docData?.global_config?.compression;
+      const compression = globalCompression === "gz" ? "gz" : form.compression;
+
+      setForm((prev) => ({
+        ...prev,
+        name: `${t.chinese_name || t.table_name || ""} 采集任务`.trim(),
+        table_name: String(t.table_name || "").trim(),
+        field_count: Number(t.field_count) || fields.length || prev.field_count,
+        field_list: buildFieldListCsv(fields),
+        // 文档未明确主键时保持原值；若解析到 pk_fields 再覆盖
+        pk_indexes: Array.isArray(t.pk_fields) && t.pk_fields.length ? buildIndexCsv(t.pk_fields) : prev.pk_indexes,
+        interface_id: String(t.interface_id || "").trim() || prev.interface_id,
+        date_field_indexes:
+          Array.isArray(t.date_fields) && t.date_fields.length ? buildIndexCsv(t.date_fields) : prev.date_field_indexes,
+        mc_table_name: toLowerMcTableName(t.table_name) || prev.mc_table_name,
+        kafka_topic: String(t.kafka_topic || "").trim() || prev.kafka_topic,
+        compression,
+      }));
+    },
+    [docData, form.compression]
+  );
+
+  const handleDocUpload = async (file) => {
+    setDocError(null);
+    setDocUploading(true);
+    try {
+      const res = await api.doc.parse(file);
+      setDocData(res);
+      setSelectedDocTableIndex("");
+      setDocQuery("");
+    } catch (e) {
+      setDocError(e?.message || "文档解析失败");
+      setDocData(null);
+      setSelectedDocTableIndex("");
+    } finally {
+      setDocUploading(false);
+    }
   };
 
   const loadList = useCallback(async () => {
@@ -433,6 +541,11 @@ export default function FlowManager() {
       await api.flows.create(formData);
       setModalOpen(false);
       setForm({ ...DEFAULT_FORM });
+      setDocError(null);
+      setDocUploading(false);
+      setDocData(null);
+      setDocQuery("");
+      setSelectedDocTableIndex("");
       setPage(1);
       await loadList();
     } catch (err) {
@@ -497,10 +610,10 @@ export default function FlowManager() {
             <GitBranch className="h-8 w-8 text-indigo-600 dark:text-indigo-400" />
             <div>
               <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">
-                流程管理
+                订单采集管理
               </h1>
               <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                智能订单采集平台 · 编排采集任务、查看可执行命令与分步确认
+                智能采集运营平台 · 编排采集任务、查看可执行命令与分步确认
               </p>
             </div>
           </div>
@@ -761,6 +874,97 @@ export default function FlowManager() {
             </div>
             <form onSubmit={handleCreate} className="flex max-h-[85vh] flex-col">
               <div className="max-h-[70vh] space-y-4 overflow-y-auto px-6 py-4">
+                <CollapsibleSection id="doc" title="上传文档智能填充（CBSS接口规范）" open={sectionOpen.doc} onToggle={toggleSection}>
+                  <div className="space-y-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="text-sm text-slate-600 dark:text-slate-400">
+                        上传 `.docx` 后可按“单张采集表”为单位选择并自动回填字段结构与基础配置。
+                      </div>
+                      <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-700">
+                        <input
+                          type="file"
+                          accept=".docx"
+                          className="hidden"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) handleDocUpload(f);
+                          }}
+                        />
+                        {docUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                        {docUploading ? "解析中…" : "上传文档"}
+                      </label>
+                    </div>
+
+                    {docError ? (
+                      <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">
+                        {docError}
+                      </div>
+                    ) : null}
+
+                    {docData?.tables?.length ? (
+                      <div className="space-y-2">
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                              搜索表（支持表名/中文名/章节号）
+                            </label>
+                            <input
+                              type="text"
+                              value={docQuery}
+                              onChange={(e) => setDocQuery(e.target.value)}
+                              className={`mt-1 ${INPUT_CLASS}`}
+                              placeholder="例如：TF_F_USER_RES / 用户-资源 / 3.1.1.20"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                              选择采集表（共 {docData.tables.length} 张）
+                            </label>
+                            <select
+                              value={selectedDocTableIndex}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setSelectedDocTableIndex(v);
+                                const idx = Number(v);
+                                const t = docData.tables.find((x) => Number(x?.index) === idx);
+                                if (t) applyDocTableToForm(t);
+                              }}
+                              className={`mt-1 ${INPUT_CLASS}`}
+                            >
+                              <option value="">请选择…</option>
+                              {docTableOptions.slice(0, 400).map((o) => (
+                                <option key={o.value} value={o.value}>
+                                  {o.label}
+                                </option>
+                              ))}
+                            </select>
+                            {docTableOptions.length > 400 ? (
+                              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                当前命中 {docTableOptions.length} 张表，为避免卡顿仅展示前 400 条。请继续缩小搜索条件。
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        {docData?.global_config ? (
+                          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
+                            <div className="font-semibold">文档全局约束（只读）</div>
+                            <div className="mt-1 grid gap-1 sm:grid-cols-2">
+                              <div>分隔符：<span className="font-mono">{docData.global_config.separator || "未提取"}</span></div>
+                              <div>行尾：<span className="font-mono">{docData.global_config.line_ending || "未提取"}</span></div>
+                              <div>编码：<span className="font-mono">{docData.global_config.encoding || "未提取"}</span></div>
+                              <div>压缩：<span className="font-mono">{docData.global_config.compression || "未提取"}</span></div>
+                              <div className="sm:col-span-2">
+                                上传目录：<span className="font-mono">{docData.global_config.upload_host || "?"}:{docData.global_config.upload_dir || "未提取"}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                </CollapsibleSection>
+
                 <CollapsibleSection
                   id="basic"
                   title="基础信息"
@@ -947,6 +1151,75 @@ export default function FlowManager() {
                     </select>
                   </div>
                 </CollapsibleSection>
+
+                {selectedDocTable ? (
+                  <CollapsibleSection
+                    id="schema_preview"
+                    title="源端表结构预览（来自文档，1:1）"
+                    open={sectionOpen.schema_preview}
+                    onToggle={toggleSection}
+                  >
+                    <div className="space-y-3">
+                      <div className="text-sm text-slate-600 dark:text-slate-400">
+                        已选择：<span className="font-mono">{selectedDocTable.section}</span>{" "}
+                        <span className="font-mono">{selectedDocTable.table_name}</span>{" "}
+                        <span className="font-semibold text-slate-900 dark:text-white">
+                          {selectedDocTable.chinese_name}
+                        </span>
+                      </div>
+
+                      <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                        <table className="w-full border-collapse text-left text-xs">
+                          <thead className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                            <tr>
+                              <th className="whitespace-nowrap px-3 py-2">序号</th>
+                              <th className="whitespace-nowrap px-3 py-2">字段英文名</th>
+                              <th className="whitespace-nowrap px-3 py-2">字段中文名</th>
+                              <th className="whitespace-nowrap px-3 py-2">字段类型</th>
+                              <th className="whitespace-nowrap px-3 py-2">是否可空</th>
+                              <th className="whitespace-nowrap px-3 py-2">备注</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                            {(Array.isArray(selectedDocTable.fields) ? selectedDocTable.fields : []).map((f) => {
+                              const isDate = String(f?.data_type || "").trim().toUpperCase() === "DATE";
+                              const nullable =
+                                f?.nullable === true ? "是" : f?.nullable === false ? "否" : "";
+                              return (
+                                <tr key={`${selectedDocTable.table_name}-${f.seq}`} className="bg-white dark:bg-slate-900">
+                                  <td className="px-3 py-2 font-mono">{f.seq}</td>
+                                  <td className="px-3 py-2 font-mono">{f.en_name}</td>
+                                  <td className="px-3 py-2">{f.cn_name}</td>
+                                  <td className="px-3 py-2 font-mono">
+                                    {f.data_type}
+                                    {isDate ? (
+                                      <span className="ml-2 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200">
+                                        DATE
+                                      </span>
+                                    ) : null}
+                                  </td>
+                                  <td className="px-3 py-2">{nullable}</td>
+                                  <td className="px-3 py-2 text-slate-600 dark:text-slate-400">{f.remark}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {missingInfoList.length ? (
+                        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-100">
+                          <div className="font-semibold">待补充信息清单</div>
+                          <ul className="mt-2 list-inside list-disc space-y-1">
+                            {missingInfoList.map((m) => (
+                              <li key={m}>{m}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </div>
+                  </CollapsibleSection>
+                ) : null}
 
                 <CollapsibleSection id="export" title="导出配置" open={sectionOpen.export} onToggle={toggleSection}>
                   <div className="space-y-3">

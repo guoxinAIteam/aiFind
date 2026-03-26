@@ -1,8 +1,13 @@
 const BASE = "/api";
 
 async function request(path, opts = {}) {
+  const headers =
+    opts.body instanceof FormData
+      ? { ...opts.headers }
+      : { "Content-Type": "application/json", ...opts.headers };
+
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...opts.headers },
+    headers,
     ...opts,
   });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -29,6 +34,13 @@ export const api = {
       }),
     completeStep: (taskId, step) =>
       request(`/flows/${taskId}/step/${step}/complete`, { method: "POST" }),
+  },
+  doc: {
+    parse: async (file) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      return request("/doc/parse", { method: "POST", body: fd });
+    },
   },
   params: {
     list: (params = {}) => {

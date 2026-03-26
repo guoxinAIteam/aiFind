@@ -1,4 +1,4 @@
-"""智能订单采集运营平台 — 入口"""
+"""智能采集运营平台 — 入口"""
 import os, sys
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -12,11 +12,12 @@ from backend.database import engine, Base
 from backend.models import *  # noqa: ensure all models registered
 from backend.seed import seed
 from backend.routers import dashboard, flows, params, monitor, knowledge, manual, skills, auth
+from backend.routers import doc_parse
 
 Base.metadata.create_all(bind=engine)
 seed()
 
-app = FastAPI(title="智能订单采集运营平台", version="1.0.0")
+app = FastAPI(title="智能采集运营平台", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -37,6 +38,7 @@ app.include_router(knowledge.router)
 app.include_router(manual.router)
 app.include_router(skills.router)
 app.include_router(auth.router)
+app.include_router(doc_parse.router)
 
 
 class SPAStaticFiles(StaticFiles):

@@ -7,6 +7,8 @@ import {
   BookOpen,
   Library,
   Zap,
+  ChevronDown,
+  ChevronRight,
   Sun,
   Moon,
   Monitor,
@@ -17,7 +19,7 @@ import { getTheme, setTheme } from "../theme";
 
 const navItems = [
   { to: "/", end: true, label: "工作台", Icon: LayoutDashboard },
-  { to: "/flows", label: "流程管理", Icon: GitBranch },
+  // “流程管理”作为目录分组，子菜单承载具体页面入口
   { to: "/params", label: "参数管理", Icon: Settings },
   { to: "/monitor", label: "监控中心", Icon: Activity },
   { to: "/knowledge", label: "知识库", Icon: BookOpen },
@@ -26,7 +28,7 @@ const navItems = [
 
 const PAGE_TITLES = {
   "/": "工作台",
-  "/flows": "流程管理",
+  "/flows": "订单采集管理",
   "/params": "参数管理",
   "/monitor": "监控中心",
   "/knowledge": "知识库",
@@ -35,8 +37,9 @@ const PAGE_TITLES = {
 
 export default function Layout() {
   const { pathname } = useLocation();
-  const pageTitle = PAGE_TITLES[pathname] ?? "智能订单采集运营平台";
+  const pageTitle = PAGE_TITLES[pathname] ?? "智能采集运营平台";
   const [theme, setThemeState] = useState(() => getTheme());
+  const [flowsOpen, setFlowsOpen] = useState(() => pathname.startsWith("/flows"));
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -48,6 +51,10 @@ export default function Layout() {
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
+
+  useEffect(() => {
+    if (pathname.startsWith("/flows")) setFlowsOpen(true);
+  }, [pathname]);
 
   const cycleTheme = () => {
     const next = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
@@ -64,10 +71,42 @@ export default function Layout() {
         <div className="flex items-center gap-2 border-b border-slate-800 px-4 py-5">
           <Zap className="h-8 w-8 shrink-0 text-indigo-400" aria-hidden />
           <span className="text-sm font-semibold leading-tight">
-            智能订单采集运营平台
+            智能采集运营平台
           </span>
         </div>
         <nav className="flex flex-1 flex-col gap-1 p-3">
+          <div className="mb-1">
+            <button
+              type="button"
+              onClick={() => setFlowsOpen((v) => !v)}
+              className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm font-medium text-slate-300 transition-colors hover:bg-slate-800 hover:text-white"
+              aria-expanded={flowsOpen}
+            >
+              <span className="flex items-center gap-3">
+                <GitBranch className="h-5 w-5 shrink-0" aria-hidden />
+                流程管理
+              </span>
+              {flowsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </button>
+            {flowsOpen ? (
+              <div className="mt-1 flex flex-col gap-1 pl-2">
+                <NavLink
+                  to="/flows"
+                  className={({ isActive }) =>
+                    [
+                      "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                      isActive
+                        ? "bg-indigo-600 text-white shadow-sm"
+                        : "text-slate-300 hover:bg-slate-800 hover:text-white",
+                    ].join(" ")
+                  }
+                >
+                  <span className="h-2 w-2 rounded-full bg-indigo-300/70" aria-hidden />
+                  订单采集管理
+                </NavLink>
+              </div>
+            ) : null}
+          </div>
           {navItems.map(({ to, end, label, Icon }) => (
             <NavLink
               key={to}

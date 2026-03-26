@@ -5,3 +5,4 @@ aiosqlite
 openpyxl
 python-multipart
 aiofiles
+python-docx
