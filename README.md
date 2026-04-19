@@ -148,3 +148,77 @@ cd frontend && npm install && cd ..
 - 优先保持后端接口字段与前端表单一致
 - 提交信息建议使用 `feat/fix/refactor` 前缀
 
+## 10. 静态（离线）采集决策中枢
+
+本平台在三智能体体系中作为 **决策中枢**：向上通过 MD5 签名流式 API 调度
+联通能开 AI 解析智能体，向下以 BDI 16 字段标准入参驱动离线采集执行智能体，
+串联「任务发起 → AI 解析 → 参数转换 → BDI 调度 → 监控 → 异常处理 →
+测试 → 上线」8 个阶段。
+
+### 10.1 关键接口
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `POST` | `/api/parse/requirement` | 同步调用上游 AI 解析，落库并计算缺失字段 |
+| `POST` | `/api/parse/stream` | SSE 流式版本，前端 `EventSource` / ReadableStream 消费 |
+| `POST` | `/api/parse/{id}/supplement` | 对解析结果补全缺失字段 |
+| `POST` | `/api/flows/static` | 创建静态采集任务并自动推进 8 阶段 |
+| `GET` | `/api/flows/{id}/static` | 查询任务 + 阶段 + 解析 + BDI 绑定 + 缺失字段 |
+| `POST` | `/api/flows/{id}/supplement` | 用户补全 BDI 入参后续跑 |
+| `GET` | `/api/mcp/tools` | 列出 MCP 工具注册表（unicom + BDI 5 个工具） |
+| `POST` | `/api/mcp/tools/{name}/call` | REST 形式调用 MCP 工具（协议未就位时的降级通道） |
+| `GET` | `/api/mcp/health` | 工具调用计数与健康 |
+
+### 10.2 环境变量
+
+复制 `.env.example` 为 `.env`（或通过 `export` 注入）：
+
+```bash
+# 上游：联通能开 AI 解析智能体
+UNICOM_APP_ID=...
+UNICOM_TEAM_ID=...
+UNICOM_SK=...
+UNICOM_API_URL=https://ai-agent.chinaunicom.cn/uia/api/robot/chat/stream/v1
+# 关闭真实调用改走内置 mock（前后端联调非常有用）
+UNICOM_MOCK=1
+
+# 下游：BDI 执行智能体
+BDI_BASE_URL=
+BDI_KEY=
+BDI_SKILL_NAME=接口规范-sftp-数据库-realease.skill
+BDI_MOCK=1
+```
+
+真实凭据切勿提交仓库。本地 mock 模式下，全链路可在无上下游真实服务时跑通。
+
+### 10.3 本地联调示意
+
+```bash
+UNICOM_MOCK=1 BDI_MOCK=1 BDI_KEY=demo ./start-dev.sh
+```
+
+浏览器访问 `http://localhost:5173/static-collect`，录入需求文本，左侧实时
+查看 8 阶段进度，右侧看到 AI 解析流式输出、缺失字段补全面板与 BDI 执行回执。
+
+### 10.4 模块边界
+
+```text
+backend/
+├── routers/
+│   ├── parse.py           # /api/parse/* 上游解析路由
+│   ├── flows.py           # /api/flows/static* 8 阶段编排 + 原有 6 步模板
+│   └── mcp.py             # /api/mcp/* 工具注册表 REST 入口
+├── services/
+│   ├── upstream/          # 联通 AI 客户端（MD5 签名、SSE 流）
+│   ├── downstream/        # BDI 客户端 + BdiParams
+│   ├── transform/         # upstream_to_bdi 映射器
+│   ├── mcp/               # Server/Client/Registry + 工具实现
+│   ├── skills/static_collect_orchestration.py  # 8 阶段模板
+│   └── reliability.py     # 指数退避重试 + task_lock
+├── middleware/agent_audit.py  # 上下游 REST 调用审计 + 告警事件
+└── models.py              # ParseResult / BdiTaskBinding / AgentInvocation / MissingField
+tests/
+└── test_unicom_parser.py / test_bdi_mapper.py  # MD5 签名、映射器、Mock 客户端
+```
+
+

@@ -45,6 +45,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 静态采集场景：上下游调用审计中间件（/api/parse /api/mcp /api/flows/static*）
+from backend.middleware.agent_audit import AgentAuditMiddleware
+app.add_middleware(AgentAuditMiddleware)
+
 # 定义健康检查路由，用于监控应用状态
 @app.get("/api/health")
 def health():

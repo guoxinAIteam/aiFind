@@ -31,6 +31,10 @@ class BdiClientError(RuntimeError):
     """下游调用异常。"""
 
 
+class _TransientBdiError(RuntimeError):
+    """内部：网络 / 5xx 瞬时错误，供重试捕获。"""
+
+
 # ----- 入参模型 ---------------------------------------------------------------
 
 
@@ -210,22 +214,42 @@ class BdiClient:
 
         url = self.config.base_url.rstrip("/") + path
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=body,
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
+
+        def _do_call() -> bytes:
+            req = urllib.request.Request(
+                url,
+                data=body,
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=self.config.timeout_s) as resp:
+                    return resp.read()
+            except urllib.error.HTTPError as e:
+                # 4xx 视为参数错误，不重试；5xx 视为瞬时错误可重试
+                if 400 <= e.code < 500:
+                    raise BdiClientError(
+                        f"BDI HTTP {e.code} {e.reason}: "
+                        f"{e.read().decode('utf-8', 'replace')[:500]}"
+                    ) from e
+                raise _TransientBdiError(
+                    f"BDI HTTP {e.code} {e.reason}"
+                ) from e
+            except urllib.error.URLError as e:
+                raise _TransientBdiError(f"BDI 网络异常 ({url}): {e}") from e
+
+        from backend.services.reliability import RetryExhaustedError, retry_with_backoff
+
         try:
-            with urllib.request.urlopen(req, timeout=self.config.timeout_s) as resp:
-                raw_bytes = resp.read()
-        except urllib.error.HTTPError as e:
-            raise BdiClientError(
-                f"BDI HTTP {e.code} {e.reason}: "
-                f"{e.read().decode('utf-8', 'replace')[:500]}"
-            ) from e
-        except urllib.error.URLError as e:
-            raise BdiClientError(f"BDI 调用失败 ({url}): {e}") from e
+            raw_bytes = retry_with_backoff(
+                _do_call,
+                retries=2,
+                base_delay=0.5,
+                max_delay=4.0,
+                retry_on=(_TransientBdiError,),
+            )
+        except RetryExhaustedError as e:
+            raise BdiClientError(str(e)) from e
 
         text = raw_bytes.decode("utf-8", errors="replace")
         try:
