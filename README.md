@@ -222,3 +222,39 @@ tests/
 ```
 
 
+## 11. 3D 全景大屏拓扑
+
+将 aiFind 决策中枢的上游解析、核心编排、BDI 执行与目标端呈现为一张可旋转
+缩放的 3D 拓扑大屏，实时展示采集任务的流向与节点健康度。
+
+- 入口：侧栏 `监控中心` 下方的 `全景大屏 3D`，路径 `/topology`
+- 视觉：5 层节点卡片 + 弧形连线 + Bloom 辉光 + 深空星场；每条活跃任务
+  一条 CatmullRom 曲线粒子流，颜色随 `scenario / status` 切换
+- HUD：顶部状态条 + 右上角 6 项实时指标 + 底部滚动事件条，事件按
+  `source_system` 映射回对应节点，3.5s 内节点发光高亮
+- 交互：`R` 重置视角 / `P` 暂停粒子 / `F` 全屏 / `B` 切换性能模式 /
+  `Esc` 关闭详情面板；点击节点弹出右侧详情（最近 20 条 AgentInvocation +
+  10 条 MonitorEvent + BDI 绑定）
+- 数据链路：
+  - 首帧：`GET /api/topology/snapshot` 返回 17 节点 + 28 条边 + 活跃任务 +
+    HUD 统计
+  - 增量：`GET /api/topology/stream` SSE 每 1.5s 推 `task_tick` 与 `event`
+    delta；断开后指数退避 2/4/8s 重连，超过 3 次降级为 5s 轮询 `/snapshot`
+  - 节点详情：`GET /api/topology/nodes/{key}` 每 5s 自动刷新
+- 性能兜底：活跃任务 > 50 时自动开启性能模式（关闭 Bloom，光流线从 50 压至 20）
+  ，也可通过 `B` 键手动切换；焦点在输入框内时快捷键不触发
+
+对应前端模块：
+
+```text
+frontend/src/pages/Topology3D.jsx
+frontend/src/pages/topology/
+├── Scene.jsx / Nodes.jsx / Edges.jsx / ActiveFlows.jsx
+├── Hud.jsx / DetailPanel.jsx
+├── useTopologyStream.js   # snapshot + SSE + 指数退避重连 + 轮询降级 + 节点高亮
+└── layout.js              # 5 层节点坐标 / 颜色常量
+```
+
+后端对应：`backend/routers/topology.py`，零新增依赖。
+
+

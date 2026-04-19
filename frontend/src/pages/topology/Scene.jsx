@@ -14,6 +14,7 @@ export default function Scene({
   enableBloom = true,
   paused = false,
   highlightMap,
+  controlsRef,
 }) {
   const nodes = snapshot?.nodes || [];
   const edges = snapshot?.edges || [];
@@ -78,11 +79,15 @@ export default function Scene({
         positions={positions}
         nodes={nodes}
         paused={paused}
+        maxLines={enableBloom ? 50 : 20}
       />
 
       <OrbitControls
+        ref={controlsRef}
         makeDefault
         enablePan
+        enableDamping
+        dampingFactor={0.08}
         minDistance={15}
         maxDistance={80}
         maxPolarAngle={Math.PI / 2.1}

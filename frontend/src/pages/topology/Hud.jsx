@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Activity, AlertTriangle, CheckCircle2, Loader2, RadioTower, Gauge } from "lucide-react";
 
 const statMeta = [
@@ -90,26 +90,41 @@ export default function Hud({ stats, connState, paused, onTogglePause, events })
 }
 
 function EventTicker({ events }) {
+  // 每 4s 切换到下一条（仅展示最近 10 条循环）
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    setIdx(0);
+  }, [events?.length]);
+  useEffect(() => {
+    if (!events?.length) return;
+    const t = setInterval(() => {
+      setIdx((v) => (v + 1) % Math.min(events.length, 10));
+    }, 4000);
+    return () => clearInterval(t);
+  }, [events]);
+
   if (!events?.length) {
     return (
       <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-slate-700/40 bg-slate-900/50 px-4 py-1.5 text-[11px] text-slate-400 backdrop-blur">
-        暂无实时事件
+        暂无实时事件 · SSE 持续监听中
       </div>
     );
   }
-  const first = events[0];
+  const cur = events[Math.min(idx, events.length - 1)];
   const sevColor = {
     critical: "text-rose-300",
     warning: "text-amber-300",
     info: "text-sky-300",
-  }[first.severity] || "text-slate-200";
+  }[cur.severity] || "text-slate-200";
   return (
     <div className="pointer-events-auto absolute bottom-4 left-1/2 w-[min(900px,90%)] -translate-x-1/2 overflow-hidden rounded-full border border-slate-700/60 bg-slate-900/70 px-4 py-1.5 text-xs text-slate-200 shadow-xl backdrop-blur">
-      <div className="flex items-center gap-3">
-        <span className={`font-semibold ${sevColor}`}>{(first.severity || "info").toUpperCase()}</span>
-        <span className="text-slate-400">[{first.source_system || "-"}]</span>
-        <span className="flex-1 truncate">{first.title}</span>
-        <span className="text-[10px] text-slate-500">最近 {events.length} 条事件</span>
+      <div key={cur.id} className="flex animate-[fadeIn_0.3s_ease] items-center gap-3">
+        <span className={`font-semibold ${sevColor}`}>{(cur.severity || "info").toUpperCase()}</span>
+        <span className="text-slate-400">[{cur.source_system || "-"}]</span>
+        <span className="flex-1 truncate">{cur.title}</span>
+        <span className="text-[10px] text-slate-500">
+          {Math.min(idx + 1, events.length)}/{Math.min(events.length, 10)}
+        </span>
       </div>
     </div>
   );
