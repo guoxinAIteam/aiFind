@@ -99,6 +99,12 @@ export const api = {
     detectAnomaly: (metrics) =>
       request("/monitor/anomaly-detect", { method: "POST", body: JSON.stringify({ metrics }) }),
   },
+  topology: {
+    snapshot: () => request("/topology/snapshot"),
+    nodeDetail: (nodeKey) => request(`/topology/nodes/${nodeKey}`),
+    // 返回一个 EventSource，交给调用方负责 onmessage/onerror
+    stream: () => new EventSource("/api/topology/stream"),
+  },
   knowledge: {
     list: (params = {}) => {
       const sp = new URLSearchParams();
