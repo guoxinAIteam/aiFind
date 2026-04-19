@@ -34,6 +34,31 @@ export const api = {
       }),
     completeStep: (taskId, step) =>
       request(`/flows/${taskId}/step/${step}/complete`, { method: "POST" }),
+    createStatic: (data) =>
+      request("/flows/static", { method: "POST", body: JSON.stringify(data) }),
+    getStatic: (id) => request(`/flows/${id}/static`),
+    supplement: (id, values) =>
+      request(`/flows/${id}/supplement`, {
+        method: "POST",
+        body: JSON.stringify({ values }),
+      }),
+  },
+  parse: {
+    requirement: (data) =>
+      request("/parse/requirement", { method: "POST", body: JSON.stringify(data) }),
+    get: (id) => request(`/parse/${id}`),
+    supplement: (id, values) =>
+      request(`/parse/${id}/supplement`, {
+        method: "POST",
+        body: JSON.stringify({ values }),
+      }),
+    // SSE 流式解析（返回原始 Response 供调用方读取 ReadableStream）
+    stream: (data) =>
+      fetch("/api/parse/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body: JSON.stringify(data),
+      }),
   },
   doc: {
     parse: async (file) => {

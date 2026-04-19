@@ -29,6 +29,7 @@ const navItems = [
 const PAGE_TITLES = {
   "/": "工作台",
   "/flows": "订单采集管理",
+  "/static-collect": "静态采集（BDI）",
   "/params": "参数管理",
   "/monitor": "监控中心",
   "/knowledge": "知识库",
@@ -39,7 +40,9 @@ export default function Layout() {
   const { pathname } = useLocation();
   const pageTitle = PAGE_TITLES[pathname] ?? "智能采集运营平台";
   const [theme, setThemeState] = useState(() => getTheme());
-  const [flowsOpen, setFlowsOpen] = useState(() => pathname.startsWith("/flows"));
+  const [flowsOpen, setFlowsOpen] = useState(
+    () => pathname.startsWith("/flows") || pathname.startsWith("/static-collect"),
+  );
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -53,7 +56,8 @@ export default function Layout() {
   }, []);
 
   useEffect(() => {
-    if (pathname.startsWith("/flows")) setFlowsOpen(true);
+    if (pathname.startsWith("/flows") || pathname.startsWith("/static-collect"))
+      setFlowsOpen(true);
   }, [pathname]);
 
   const cycleTheme = () => {
@@ -103,6 +107,20 @@ export default function Layout() {
                 >
                   <span className="h-2 w-2 rounded-full bg-indigo-300/70" aria-hidden />
                   订单采集管理
+                </NavLink>
+                <NavLink
+                  to="/static-collect"
+                  className={({ isActive }) =>
+                    [
+                      "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                      isActive
+                        ? "bg-indigo-600 text-white shadow-sm"
+                        : "text-slate-300 hover:bg-slate-800 hover:text-white",
+                    ].join(" ")
+                  }
+                >
+                  <span className="h-2 w-2 rounded-full bg-emerald-300/70" aria-hidden />
+                  静态采集（BDI）
                 </NavLink>
               </div>
             ) : null}
