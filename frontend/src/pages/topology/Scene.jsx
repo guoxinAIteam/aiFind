@@ -13,6 +13,7 @@ export default function Scene({
   onSelectNode,
   enableBloom = true,
   paused = false,
+  highlightMap,
 }) {
   const nodes = snapshot?.nodes || [];
   const edges = snapshot?.edges || [];
@@ -70,6 +71,7 @@ export default function Scene({
         positions={positions}
         onSelect={onSelectNode}
         selectedKey={selectedKey}
+        highlightMap={highlightMap}
       />
       <ActiveFlows
         tasks={activeTasks}

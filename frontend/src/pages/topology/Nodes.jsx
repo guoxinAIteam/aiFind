@@ -6,7 +6,7 @@ import { STATUS_COLORS, LAYER_COLORS } from "./layout";
 
 const BOX_EDGES = new THREE.EdgesGeometry(new THREE.BoxGeometry(3.6, 1.6, 0.6));
 
-function NodeCard({ node, position, onSelect, selected }) {
+function NodeCard({ node, position, onSelect, selected, highlightUntil }) {
   const ringRef = useRef();
   const boxRef = useRef();
   const statusColor = STATUS_COLORS[node.status] || STATUS_COLORS.idle;
@@ -15,15 +15,17 @@ function NodeCard({ node, position, onSelect, selected }) {
 
   useFrame((state) => {
     const t = state.clock.getElapsedTime();
+    const now = performance.now();
+    const flashing = highlightUntil && now < highlightUntil;
     if (ringRef.current) {
       const pulse = 0.9 + 0.25 * Math.sin(t * 2 + node.layer);
       ringRef.current.scale.set(pulse, pulse, 1);
-      ringRef.current.material.opacity = active ? 0.7 : 0.25;
+      ringRef.current.material.opacity = flashing ? 1.0 : active ? 0.7 : 0.25;
     }
     if (boxRef.current) {
       const mat = boxRef.current.material;
       if (mat) {
-        const base = selected ? 0.9 : active ? 0.55 : 0.2;
+        const base = flashing ? 1.4 : selected ? 0.9 : active ? 0.55 : 0.2;
         mat.emissiveIntensity = base + 0.2 * Math.sin(t * 3 + node.layer);
       }
     }
@@ -103,7 +105,7 @@ function NodeCard({ node, position, onSelect, selected }) {
 // 仅在 positions/nodes/select 变化时 re-render
 const NodeCardMemo = React.memo(NodeCard);
 
-export default function Nodes({ nodes, positions, onSelect, selectedKey }) {
+export default function Nodes({ nodes, positions, onSelect, selectedKey, highlightMap }) {
   const entries = useMemo(() => {
     const out = [];
     for (const n of nodes || []) {
@@ -121,6 +123,7 @@ export default function Nodes({ nodes, positions, onSelect, selectedKey }) {
           position={p}
           onSelect={onSelect}
           selected={selectedKey === n.key}
+          highlightUntil={highlightMap?.[n.key]}
         />
       ))}
     </group>

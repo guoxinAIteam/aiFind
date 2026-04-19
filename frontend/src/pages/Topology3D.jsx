@@ -14,6 +14,7 @@ export default function Topology3D() {
     connState,
     paused,
     togglePause,
+    highlightMap,
   } = useTopologyStream();
   const [selected, setSelected] = useState(null);
   const [perfMode, setPerfMode] = useState(false);
@@ -53,6 +54,7 @@ export default function Topology3D() {
             onSelectNode={handleSelect}
             enableBloom={!perfMode}
             paused={paused}
+            highlightMap={highlightMap}
           />
         </Suspense>
       </Canvas>

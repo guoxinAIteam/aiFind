@@ -1,13 +1,41 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { api } from "../../api";
 
+// source_system → 节点 key 的映射（不区分大小写；覆盖 seed 里常见的取值）
+const SOURCE_SYSTEM_TO_NODES = {
+  hbase: ["hbase"],
+  hdfs: ["hdfs_dst", "hdfs_src"],
+  hive: ["hive"],
+  mc: ["hive"],
+  flink: ["kafka", "flows"],
+  kafka: ["kafka"],
+  sftp: ["sftp"],
+  bdi: ["resource", "modeling", "mapping", "flow_mgmt"],
+  platform: ["flows", "parse"],
+  unicom: ["unicom_ai"],
+  parse: ["parse"],
+  upstream: ["unicom_ai", "parse"],
+  downstream: ["resource", "modeling", "mapping", "flow_mgmt"],
+};
+
+function eventToNodeKeys(ev) {
+  const src = (ev?.source_system || "").toLowerCase().trim();
+  if (!src) return [];
+  if (SOURCE_SYSTEM_TO_NODES[src]) return SOURCE_SYSTEM_TO_NODES[src];
+  for (const [k, v] of Object.entries(SOURCE_SYSTEM_TO_NODES)) {
+    if (src.includes(k)) return v;
+  }
+  return [];
+}
+
 // 订阅后端 topology snapshot + SSE stream，自动做"快照刷新 + 增量合并 + 断线重试"。
-// 阶段 D 再叠加轮询降级；本阶段先实现核心链路 + 事件缓冲。
+// 阶段 D 再叠加轮询降级；本阶段先实现核心链路 + 事件缓冲 + 节点高亮映射。
 export function useTopologyStream() {
   const [snapshot, setSnapshot] = useState(null);
   const [stats, setStats] = useState(null);
   const [activeTasks, setActiveTasks] = useState([]);
   const [events, setEvents] = useState([]); // 滚动事件条
+  const [highlightMap, setHighlightMap] = useState({}); // nodeKey → highlight 到期时间（ms）
   const [connState, setConnState] = useState("idle"); // idle | connecting | open | fallback | error
   const [paused, setPaused] = useState(false);
   const esRef = useRef(null);
@@ -63,6 +91,15 @@ export function useTopologyStream() {
           if (payload.stats) setStats(payload.stats);
         } else if (payload.type === "event") {
           setEvents((prev) => [payload, ...prev].slice(0, 50));
+          const keys = eventToNodeKeys(payload);
+          if (keys.length) {
+            const until = performance.now() + 3500;
+            setHighlightMap((prev) => {
+              const next = { ...prev };
+              for (const k of keys) next[k] = until;
+              return next;
+            });
+          }
         }
       } catch (e) {
         // ignore malformed
@@ -101,6 +138,23 @@ export function useTopologyStream() {
 
   const togglePause = useCallback(() => setPaused((v) => !v), []);
 
+  // 定期清理已到期的 highlight（避免 Map 无限增长）
+  useEffect(() => {
+    const t = setInterval(() => {
+      const now = performance.now();
+      setHighlightMap((prev) => {
+        let changed = false;
+        const next = {};
+        for (const [k, until] of Object.entries(prev)) {
+          if (until > now) next[k] = until;
+          else changed = true;
+        }
+        return changed ? next : prev;
+      });
+    }, 2000);
+    return () => clearInterval(t);
+  }, []);
+
   return {
     snapshot,
     stats,
@@ -110,5 +164,6 @@ export function useTopologyStream() {
     paused,
     togglePause,
     refreshSnapshot,
+    highlightMap,
   };
 }
