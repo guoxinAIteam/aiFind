@@ -72,6 +72,9 @@ app.include_router(auth.router)
 app.include_router(doc_parse.router)
 # 上游 AI 解析路由（静态采集场景）
 app.include_router(parse.router)
+# MCP 工具注册表 REST 入口
+from backend.routers import mcp as mcp_router
+app.include_router(mcp_router.router)
 
 
 # 自定义静态文件服务类，用于支持 SPA（单页应用）的前端路由
