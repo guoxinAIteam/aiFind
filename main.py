@@ -17,15 +17,21 @@ from fastapi.staticfiles import StaticFiles
 from backend.database import engine, Base
 # 导入所有模型（使用 * 导入确保所有模型都被注册）
 from backend.models import *  # noqa: ensure all models registered
+# 导入轻量 schema 对齐逻辑（为已有表追加本期新增列）
+from backend.migrations import ensure_schema
 # 导入数据初始化函数
 from backend.seed import seed
 # 导入各个功能模块的路由
 from backend.routers import dashboard, flows, params, monitor, knowledge, manual, skills, auth
 # 导入文档解析路由
 from backend.routers import doc_parse
+# 导入上游 AI 解析路由
+from backend.routers import parse
 
 # 创建数据库表结构（如果表不存在）
 Base.metadata.create_all(bind=engine)
+# 为已有表补齐本期新增列（幂等）
+ensure_schema(engine)
 # 初始化基础数据
 seed()
 
@@ -64,6 +70,8 @@ app.include_router(skills.router)
 app.include_router(auth.router)
 # 文档解析路由
 app.include_router(doc_parse.router)
+# 上游 AI 解析路由（静态采集场景）
+app.include_router(parse.router)
 
 
 # 自定义静态文件服务类，用于支持 SPA（单页应用）的前端路由
