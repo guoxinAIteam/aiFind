@@ -129,27 +129,35 @@ start_dev() {
   need_cmd npm
   need_cmd python3
 
-  if port_in_use 8000; then
-    echo "[错误] 端口 8000 已被占用，请先释放后再启动。"
-    exit 1
-  fi
-  if port_in_use 5173; then
-    echo "[错误] 端口 5173 已被占用，请先释放后再启动。"
-    exit 1
-  fi
+  # 后端端口：可用环境变量 BACKEND_PORT / PORT 指定起始值；若被占用则顺延到下一个空闲端口
+  BACKEND_PORT="${BACKEND_PORT:-${PORT:-8000}}"
+  while port_in_use "$BACKEND_PORT"; do
+    echo "[提示] 端口 ${BACKEND_PORT} 已被占用，尝试 $((BACKEND_PORT + 1))..."
+    BACKEND_PORT=$((BACKEND_PORT + 1))
+  done
+  export PORT="$BACKEND_PORT"
+
+  # 前端 Vite 端口：可用 VITE_PORT 指定起始值；若被占用则顺延
+  VITE_PORT="${VITE_PORT:-5173}"
+  while port_in_use "$VITE_PORT"; do
+    echo "[提示] 端口 ${VITE_PORT} 已被占用，尝试 $((VITE_PORT + 1))..."
+    VITE_PORT=$((VITE_PORT + 1))
+  done
+  export VITE_PORT
+  export BACKEND_PORT
 
   install_python_deps_if_needed
   install_frontend_deps_if_needed
 
   echo "========================================="
   echo "开发模式已启动（按 Ctrl+C 一次性停止）"
-  echo "  前端: http://localhost:5173"
-  echo "  后端: http://localhost:8000"
-  echo "  API:  http://localhost:8000/docs"
+  echo "  前端: http://localhost:${VITE_PORT}"
+  echo "  后端: http://localhost:${BACKEND_PORT}"
+  echo "  API:  http://localhost:${BACKEND_PORT}/docs"
   echo "========================================="
 
   set +e
-  python3 main.py & BACKEND_PID=$!
+  PORT="$BACKEND_PORT" python3 main.py & BACKEND_PID=$!
   (cd frontend && npm run dev) & FRONTEND_PID=$!
 
   cleanup() {

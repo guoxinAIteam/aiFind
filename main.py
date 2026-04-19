@@ -92,5 +92,7 @@ if os.path.isdir(dist):
 # 当直接运行此脚本时，启动开发服务器
 if __name__ == "__main__":
     import uvicorn
-    # 启动 uvicorn 服务器，监听所有网络接口的 8000 端口，开启热重载功能
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+    # 可通过环境变量 PORT 覆盖（默认 8000；端口被占用时换空闲端口）
+    _port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run("main:app", host="0.0.0.0", port=_port, reload=True)
