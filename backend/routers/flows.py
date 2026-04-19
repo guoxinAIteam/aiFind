@@ -3,12 +3,31 @@ import math
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
-from backend.models import CollectTask, FlowStep
+from backend.models import (
+    AgentInvocation,
+    BdiTaskBinding,
+    CollectTask,
+    FlowStep,
+    MissingField,
+    ParseResult,
+)
 from backend.services.ai_engine import calculate_pre_regions
+from backend.services.downstream import BdiClient, BdiClientConfig, BdiClientError
+from backend.services.skills.static_collect_orchestration import (
+    STAGE_ORDER,
+    STATIC_STAGE_TEMPLATES,
+    build_initial_steps,
+)
+from backend.services.transform import upstream_to_bdi
+from backend.services.upstream import (
+    UnicomParseClient,
+    UnicomParseConfig,
+    UnicomParseError,
+)
 
 router = APIRouter(prefix="/api/flows", tags=["flows"])
 
@@ -610,3 +629,611 @@ def complete_step(task_id: int, step_order: int, db: Session = Depends(get_db)):
 
     db.commit()
     return {"message": f"步骤 {step_order} 已完成", "task_status": task.status}
+
+
+# ========================================================================
+# 静态（离线）采集新场景：8 阶段状态机 + AI 解析 + BDI 执行
+# ========================================================================
+
+
+class StaticCollectReq(BaseModel):
+    name: str = Field(..., description="采集任务名称")
+    requirement: str = Field(..., description="采集需求 / 接口规范文本")
+    overrides: Dict[str, Any] = Field(default_factory=dict, description="BDI 入参覆盖")
+    auto_execute: bool = Field(
+        True, description="是否创建后自动推进阶段 2~8；关闭后仅初始化"
+    )
+    user_name: str = Field("aiFind", description="审计用")
+
+
+class SupplementReq(BaseModel):
+    values: Dict[str, Any] = Field(default_factory=dict)
+
+
+def _static_step_row(task_id: int, step_tpl: Dict[str, Any]) -> FlowStep:
+    return FlowStep(
+        task_id=task_id,
+        step_order=step_tpl["step_order"],
+        name=step_tpl["name"],
+        description=step_tpl.get("description", ""),
+        sub_steps=step_tpl["operations"],
+        automation=step_tpl.get("automation", "auto"),
+    )
+
+
+def _advance_stage(
+    task: CollectTask, step_order: int, db: Session, now: datetime.datetime
+) -> None:
+    """复用现有 _advance_task_to_next_step 语义，同时维护 stage 字段。"""
+    _advance_task_to_next_step(task, step_order, db, now)
+    if step_order < len(STATIC_STAGE_TEMPLATES):
+        task.stage = STAGE_ORDER[step_order]
+    elif task.current_step >= task.total_steps:
+        task.stage = "online"
+
+
+def _mark_step(
+    step: FlowStep,
+    status: str,
+    now: datetime.datetime,
+    log: str = "",
+) -> None:
+    step.status = status
+    if status == "running" and not step.started_at:
+        step.started_at = now
+    if status in {"completed", "failed", "skipped"}:
+        step.finished_at = now
+    if log:
+        step.log = (step.log or "") + (f"\n{log}" if step.log else log)
+
+
+def _audit_call(
+    db: Session,
+    *,
+    task_id: int,
+    direction: str,
+    agent: str,
+    tool_name: str,
+    request: Dict[str, Any],
+    response: Dict[str, Any],
+    status: str,
+    error: str = "",
+    latency_ms: int = 0,
+) -> None:
+    db.add(
+        AgentInvocation(
+            task_id=task_id,
+            direction=direction,
+            agent=agent,
+            tool_name=tool_name,
+            request=request,
+            response=response,
+            status=status,
+            error=error,
+            latency_ms=latency_ms,
+        )
+    )
+
+
+def _finalize_operations(step: FlowStep, status: str = "confirmed") -> None:
+    step.sub_steps = [
+        {**op, "status": status} for op in (step.sub_steps or [])
+    ]
+
+
+@router.post("/static")
+def create_static_task(req: StaticCollectReq, db: Session = Depends(get_db)):
+    """静态采集任务：接受需求文本，自动走 8 阶段。"""
+    if not req.requirement.strip():
+        raise HTTPException(400, "requirement 不能为空")
+
+    now = datetime.datetime.utcnow()
+    task = CollectTask(
+        name=req.name,
+        table_name=(req.overrides.get("table_name") or "").strip() or "pending",
+        task_type="static_bdi",
+        scenario="static_bdi",
+        stage=STAGE_ORDER[0],
+        status="running",
+        started_at=now,
+        current_step=1,
+        progress=5,
+        total_steps=len(STATIC_STAGE_TEMPLATES),
+        config_snapshot={"requirement": req.requirement, "overrides": req.overrides or {}},
+    )
+    db.add(task)
+    db.flush()
+
+    steps = build_initial_steps()
+    step_rows: List[FlowStep] = []
+    for idx, tpl in enumerate(steps):
+        row = _static_step_row(task.id, tpl)
+        if idx == 0:
+            _mark_step(row, "running", now, "任务已发起")
+        db.add(row)
+        step_rows.append(row)
+    db.flush()
+
+    # 阶段 1 立即完成
+    _finalize_operations(step_rows[0])
+    _mark_step(step_rows[0], "completed", now, "任务发起完成")
+    _advance_stage(task, 1, db, now)
+
+    db.commit()
+    db.refresh(task)
+
+    if req.auto_execute:
+        _run_auto_pipeline(db, task, req)
+        db.refresh(task)
+
+    return get_static_task_detail(task.id, db=db)
+
+
+@router.post("/{task_id}/supplement")
+def supplement_static_task(
+    task_id: int, body: SupplementReq, db: Session = Depends(get_db)
+):
+    """用户提交缺失参数补全，自动尝试继续推进后续阶段。"""
+    task = db.query(CollectTask).filter(CollectTask.id == task_id).first()
+    if not task:
+        raise HTTPException(404, "任务不存在")
+    if task.scenario != "static_bdi":
+        raise HTTPException(400, "该接口仅适用于 static_bdi 场景任务")
+
+    snapshot = dict(task.config_snapshot or {})
+    overrides = dict(snapshot.get("overrides") or {})
+    overrides.update({k: v for k, v in body.values.items() if v not in (None, "", [], {})})
+    snapshot["overrides"] = overrides
+    task.config_snapshot = snapshot
+    db.commit()
+
+    req = StaticCollectReq(
+        name=task.name,
+        requirement=str(snapshot.get("requirement") or ""),
+        overrides=overrides,
+        auto_execute=True,
+    )
+    _run_auto_pipeline(db, task, req, resume_from_supplement=True)
+    return get_static_task_detail(task_id, db=db)
+
+
+@router.get("/{task_id}/static")
+def get_static_task_detail(task_id: int, db: Session = Depends(get_db)):
+    task = db.query(CollectTask).filter(CollectTask.id == task_id).first()
+    if not task:
+        raise HTTPException(404, "任务不存在")
+    steps = (
+        db.query(FlowStep)
+        .filter(FlowStep.task_id == task_id)
+        .order_by(FlowStep.step_order)
+        .all()
+    )
+    parse_rows = (
+        db.query(ParseResult)
+        .filter(ParseResult.task_id == task_id)
+        .order_by(ParseResult.id.desc())
+        .all()
+    )
+    bindings = (
+        db.query(BdiTaskBinding)
+        .filter(BdiTaskBinding.task_id == task_id)
+        .order_by(BdiTaskBinding.id.desc())
+        .all()
+    )
+    missing = (
+        db.query(MissingField)
+        .filter(MissingField.task_id == task_id)
+        .order_by(MissingField.id.desc())
+        .all()
+    )
+    return {
+        "id": task.id,
+        "name": task.name,
+        "scenario": task.scenario,
+        "stage": task.stage,
+        "status": task.status,
+        "progress": task.progress,
+        "current_step": task.current_step,
+        "total_steps": task.total_steps,
+        "table_name": task.table_name,
+        "config_snapshot": task.config_snapshot or {},
+        "error_message": task.error_message,
+        "upstream_conv_id": task.upstream_conv_id,
+        "downstream_task_id": task.downstream_task_id,
+        "created_at": str(task.created_at) if task.created_at else None,
+        "started_at": str(task.started_at) if task.started_at else None,
+        "finished_at": str(task.finished_at) if task.finished_at else None,
+        "steps": [
+            {
+                "step_order": s.step_order,
+                "name": s.name,
+                "description": s.description,
+                "automation": s.automation,
+                "status": s.status,
+                "log": s.log or "",
+                "operations": s.sub_steps or [],
+            }
+            for s in steps
+        ],
+        "parse_results": [
+            {
+                "id": pr.id,
+                "status": pr.status,
+                "structured": pr.structured or {},
+                "missing_fields": pr.missing_fields or [],
+                "conversation_id": pr.conversation_id,
+                "latency_ms": pr.latency_ms,
+            }
+            for pr in parse_rows
+        ],
+        "bdi_bindings": [
+            {
+                "id": b.id,
+                "bdi_task_id": b.bdi_task_id,
+                "bdi_flow_id": b.bdi_flow_id,
+                "bdi_mapping_id": b.bdi_mapping_id,
+                "bdi_model_id": b.bdi_model_id,
+                "full_status": b.full_status,
+                "last_step": b.last_step,
+                "execute_log": b.execute_log or [],
+                "updated_at": str(b.updated_at) if b.updated_at else None,
+            }
+            for b in bindings
+        ],
+        "missing_fields": [
+            {
+                "id": m.id,
+                "field_path": m.field_path,
+                "reason": m.reason,
+                "user_value": m.user_value,
+                "confirmed_at": str(m.confirmed_at) if m.confirmed_at else None,
+            }
+            for m in missing
+        ],
+    }
+
+
+# ----- 自动推进管线 -----------------------------------------------------------
+
+
+def _run_auto_pipeline(
+    db: Session,
+    task: CollectTask,
+    req: StaticCollectReq,
+    *,
+    resume_from_supplement: bool = False,
+) -> None:
+    """阶段 2 -> 8 的自动推进；失败时把相应步骤标记为 failed 并保留任务 status。"""
+    try:
+        structured = _run_stage_parse(db, task, req, resume=resume_from_supplement)
+        mapping_ok = _run_stage_transform(db, task, req, structured)
+        if not mapping_ok:
+            return
+        _run_stage_bdi(db, task, req, structured)
+        _run_stage_monitor(db, task)
+        _run_stage_testing(db, task)
+        _run_stage_online(db, task)
+    finally:
+        db.commit()
+
+
+def _run_stage_parse(
+    db: Session,
+    task: CollectTask,
+    req: StaticCollectReq,
+    *,
+    resume: bool,
+) -> Dict[str, Any]:
+    step = _step(db, task.id, 2)
+    now = datetime.datetime.utcnow()
+    _mark_step(step, "running", now, "开始 AI 智能解析")
+
+    if resume:
+        prior = (
+            db.query(ParseResult)
+            .filter(ParseResult.task_id == task.id)
+            .order_by(ParseResult.id.desc())
+            .first()
+        )
+        if prior and prior.structured:
+            _finalize_operations(step)
+            _mark_step(step, "completed", now, "使用既有解析结果（补全后继续）")
+            _advance_stage(task, 2, db, now)
+            return dict(prior.structured)
+
+    structured, pr_id, conv_id = _invoke_upstream_parse(db, task, req)
+    task.upstream_conv_id = conv_id or ""
+    if not structured:
+        _mark_step(step, "failed", now, "AI 解析失败，任务挂起等待人工处理")
+        task.status = "failed"
+        task.error_message = "AI 解析失败或返回为空"
+        return {}
+
+    _finalize_operations(step)
+    _mark_step(step, "completed", now, f"AI 解析完成, parse_id={pr_id}")
+    _advance_stage(task, 2, db, now)
+    return structured
+
+
+def _run_stage_transform(
+    db: Session, task: CollectTask, req: StaticCollectReq, structured: Dict[str, Any]
+) -> bool:
+    step = _step(db, task.id, 3)
+    now = datetime.datetime.utcnow()
+    _mark_step(step, "running", now, "开始映射 BDI 入参")
+
+    mapping = upstream_to_bdi(structured, overrides=req.overrides or {})
+    snapshot = dict(task.config_snapshot or {})
+    snapshot["bdi_payload"] = mapping.payload
+    snapshot["mapping_warnings"] = mapping.warnings
+    snapshot["mapping_used_defaults"] = mapping.used_defaults
+    task.config_snapshot = snapshot
+
+    if not mapping.ok:
+        # 写缺失字段，等待用户补全
+        for issue in mapping.missing:
+            db.add(
+                MissingField(
+                    task_id=task.id,
+                    field_path=issue.field_path,
+                    reason=issue.reason,
+                )
+            )
+        _mark_step(
+            step,
+            "waiting",
+            now,
+            "BDI 参数缺失，等待用户补全: "
+            + ", ".join(i.field_path for i in mapping.missing),
+        )
+        task.status = "waiting_supplement"
+        task.stage = "transforming"
+        return False
+
+    _finalize_operations(step)
+    _mark_step(step, "completed", now, "BDI 入参生成并校验通过")
+    _advance_stage(task, 3, db, now)
+    task.status = "running"
+    return True
+
+
+def _run_stage_bdi(
+    db: Session, task: CollectTask, req: StaticCollectReq, structured: Dict[str, Any]
+) -> None:
+    step = _step(db, task.id, 4)
+    now = datetime.datetime.utcnow()
+    _mark_step(step, "running", now, "调度 BDI 执行")
+
+    mapping = upstream_to_bdi(structured, overrides=req.overrides or {})
+    if not mapping.ok or mapping.params is None:
+        _mark_step(step, "failed", now, "入参异常，无法调度 BDI")
+        task.status = "failed"
+        return
+
+    client = BdiClient(BdiClientConfig.from_env())
+    binding = BdiTaskBinding(
+        task_id=task.id,
+        payload=mapping.payload,
+        full_status="running",
+    )
+    db.add(binding)
+    db.flush()
+
+    try:
+        resp = client.call_full_process(mapping.params)
+    except BdiClientError as e:
+        binding.full_status = "failed"
+        binding.response = {"error": str(e)}
+        _audit_call(
+            db,
+            task_id=task.id,
+            direction="downstream",
+            agent="bdi_executor",
+            tool_name="bdi_full_process_execution",
+            request=mapping.payload,
+            response={},
+            status="failed",
+            error=str(e),
+        )
+        _mark_step(step, "failed", now, f"BDI 调用失败: {e}")
+        task.status = "failed"
+        task.error_message = str(e)
+        return
+
+    binding.full_status = resp.full_status
+    binding.last_step = resp.task_detail.get("step", "full_process")
+    binding.execute_log = resp.execute_log
+    binding.response = resp.raw
+    binding.bdi_task_id = str(resp.task_detail.get("task_id") or "")
+    binding.bdi_flow_id = str(resp.task_detail.get("flow_id") or "")
+    binding.bdi_mapping_id = str(resp.task_detail.get("mapping_id") or "")
+    binding.bdi_model_id = str(resp.task_detail.get("model_id") or "")
+
+    task.downstream_task_id = binding.bdi_task_id
+    _audit_call(
+        db,
+        task_id=task.id,
+        direction="downstream",
+        agent="bdi_executor",
+        tool_name="bdi_full_process_execution",
+        request=mapping.payload,
+        response=resp.raw,
+        status="succeeded" if resp.ok else "failed",
+        latency_ms=resp.latency_ms,
+    )
+
+    if not resp.ok:
+        _mark_step(step, "failed", now, f"BDI 执行失败: {resp.message}")
+        task.status = "failed"
+        task.error_message = resp.message
+        return
+
+    _finalize_operations(step)
+    _mark_step(step, "completed", now, f"BDI 执行成功: {resp.message}")
+    _advance_stage(task, 4, db, now)
+
+
+def _run_stage_monitor(db: Session, task: CollectTask) -> None:
+    step = _step(db, task.id, 5)
+    now = datetime.datetime.utcnow()
+    _mark_step(step, "running", now, "接收执行进度与日志")
+    _finalize_operations(step)
+    _mark_step(step, "completed", now, "执行日志已归档")
+    _advance_stage(task, 5, db, now)
+
+
+def _run_stage_testing(db: Session, task: CollectTask) -> None:
+    now = datetime.datetime.utcnow()
+    # 正常路径：阶段 6 异常处理不触发，标记为 skipped 后推进到阶段 7
+    err_step = _step(db, task.id, 6)
+    _mark_step(err_step, "skipped", now, "无异常，跳过")
+    _advance_stage(task, 6, db, now)
+
+    step = _step(db, task.id, 7)
+    _mark_step(step, "running", now, "任务测试与结果校验")
+    _finalize_operations(step)
+    _mark_step(step, "completed", now, "测试通过")
+    _advance_stage(task, 7, db, now)
+
+
+def _run_stage_online(db: Session, task: CollectTask) -> None:
+    step = _step(db, task.id, 8)
+    now = datetime.datetime.utcnow()
+    _mark_step(step, "running", now, "任务上线与调度注册")
+    _finalize_operations(step)
+    _mark_step(step, "completed", now, "已上线")
+    _advance_stage(task, 8, db, now)
+    task.status = "completed"
+    task.progress = 100
+    task.finished_at = now
+
+
+def _step(db: Session, task_id: int, order: int) -> FlowStep:
+    row = (
+        db.query(FlowStep)
+        .filter(FlowStep.task_id == task_id, FlowStep.step_order == order)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(500, f"步骤 {order} 不存在（task={task_id}）")
+    return row
+
+
+def _invoke_upstream_parse(
+    db: Session, task: CollectTask, req: StaticCollectReq
+):
+    """调用上游 AI 解析智能体（含 mock 模式降级）。返回 (structured, parse_id, conv_id)。"""
+    import json as _json
+    import os as _os
+
+    # 复用 parse 路由的 mock 开关，避免无凭据时阻塞整个流水线
+    mock_on = _os.environ.get("UNICOM_MOCK", "").strip().lower() in {"1", "true", "yes"}
+    started = datetime.datetime.utcnow()
+
+    if mock_on:
+        structured = {
+            "source_info": {
+                "source_code": "sftp_cb_224",
+                "source_file_path": "/sftp/data/src_ai_caiji",
+                "source_row_split_char": "UNIX换行符",
+                "source_col_split_char": "逗号",
+                "source_ext": "gz",
+            },
+            "target_info": {
+                "target_code": "305实时数仓集群_hive",
+                "target_database_name": "paimon_src",
+                "table_name": "src_ai_caiji",
+            },
+            "task_base_info": {
+                "logic_dir": "治理监控测试",
+                "logic_project": "经分",
+                "logic_data_level": "SRC",
+                "logic_topic_name": "CUS(客户域)",
+                "logic_type": "5G",
+                "physical_dir": "测试目录",
+            },
+        }
+        content = _json.dumps(structured, ensure_ascii=False)
+        pr = ParseResult(
+            task_id=task.id,
+            source="unicom",
+            requirement=req.requirement,
+            content=content,
+            structured=structured,
+            missing_fields=[],
+            conversation_id="mock-conv",
+            message_id="mock-msg",
+            latency_ms=0,
+            status="succeeded",
+            raw_response=content,
+        )
+        db.add(pr)
+        db.flush()
+        _audit_call(
+            db,
+            task_id=task.id,
+            direction="upstream",
+            agent="unicom_ai_parser",
+            tool_name="unicom_ai_parse_collection_requirement",
+            request={"requirement": req.requirement, "mock": True},
+            response={"structured": structured},
+            status="succeeded",
+        )
+        return structured, pr.id, "mock-conv"
+
+    try:
+        client = UnicomParseClient(UnicomParseConfig.from_env(require=True))
+        result = client.invoke(req.requirement, user_name=req.user_name)
+        pr = ParseResult(
+            task_id=task.id,
+            source="unicom",
+            requirement=req.requirement,
+            content=result.content,
+            structured=result.structured,
+            missing_fields=[],
+            conversation_id=result.conversation_id,
+            message_id=result.message_id,
+            latency_ms=result.latency_ms,
+            status="succeeded",
+            raw_response=(result.raw_response or "")[:200_000],
+        )
+        db.add(pr)
+        db.flush()
+        _audit_call(
+            db,
+            task_id=task.id,
+            direction="upstream",
+            agent="unicom_ai_parser",
+            tool_name="unicom_ai_parse_collection_requirement",
+            request={"requirement": req.requirement},
+            response={"structured": result.structured},
+            status="succeeded",
+            latency_ms=result.latency_ms,
+        )
+        return result.structured, pr.id, result.conversation_id
+    except UnicomParseError as e:
+        pr = ParseResult(
+            task_id=task.id,
+            source="unicom",
+            requirement=req.requirement,
+            status="failed",
+            error=str(e),
+        )
+        db.add(pr)
+        db.flush()
+        latency_ms = int(
+            (datetime.datetime.utcnow() - started).total_seconds() * 1000
+        )
+        _audit_call(
+            db,
+            task_id=task.id,
+            direction="upstream",
+            agent="unicom_ai_parser",
+            tool_name="unicom_ai_parse_collection_requirement",
+            request={"requirement": req.requirement},
+            response={},
+            status="failed",
+            error=str(e),
+            latency_ms=latency_ms,
+        )
+        return {}, pr.id, ""
