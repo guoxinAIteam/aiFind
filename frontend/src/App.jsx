@@ -9,6 +9,7 @@ const ParamManager = lazy(() => import("./pages/ParamManager"));
 const Monitor = lazy(() => import("./pages/Monitor"));
 const Knowledge = lazy(() => import("./pages/Knowledge"));
 const Manual = lazy(() => import("./pages/Manual"));
+const Topology3D = lazy(() => import("./pages/Topology3D"));
 
 function LoadingFallback() {
   return (
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="static-collect" element={<StaticCollect />} />
           <Route path="params" element={<ParamManager />} />
           <Route path="monitor" element={<Monitor />} />
+          <Route path="topology" element={<Topology3D />} />
           <Route path="knowledge" element={<Knowledge />} />
           <Route path="manual" element={<Manual />} />
         </Route>

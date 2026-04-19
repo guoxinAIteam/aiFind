@@ -7,6 +7,7 @@ import {
   BookOpen,
   Library,
   Zap,
+  RadioTower,
   ChevronDown,
   ChevronRight,
   Sun,
@@ -22,6 +23,7 @@ const navItems = [
   // “流程管理”作为目录分组，子菜单承载具体页面入口
   { to: "/params", label: "参数管理", Icon: Settings },
   { to: "/monitor", label: "监控中心", Icon: Activity },
+  { to: "/topology", label: "全景大屏 3D", Icon: RadioTower },
   { to: "/knowledge", label: "知识库", Icon: BookOpen },
   { to: "/manual", label: "操作手册", Icon: Library },
 ];
@@ -32,6 +34,7 @@ const PAGE_TITLES = {
   "/static-collect": "静态采集（BDI）",
   "/params": "参数管理",
   "/monitor": "监控中心",
+  "/topology": "全景大屏 3D",
   "/knowledge": "知识库",
   "/manual": "操作手册",
 };
