@@ -13,7 +13,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -489,3 +489,38 @@ def _set_by_path(obj: Dict[str, Any], path: str, value: Any) -> None:
             cur[p] = nxt
         cur = nxt
     cur[parts[-1]] = value
+
+
+@router.post("/docx")
+async def extract_docx_plain_text(file: UploadFile = File(...)):
+    """从 Word（.docx）提取纯文本，供采集需求录入回填；不做结构化解析。"""
+    import io
+
+    from docx import Document
+
+    if not file.filename or not file.filename.lower().endswith(".docx"):
+        raise HTTPException(400, "仅支持 .docx 文档")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "文件为空")
+    try:
+        doc = Document(io.BytesIO(raw))
+    except Exception as e:
+        raise HTTPException(400, f"无法读取 Word: {e}") from e
+    lines: List[str] = []
+    for p in doc.paragraphs:
+        t = (p.text or "").strip()
+        if t:
+            lines.append(t)
+    for tb in doc.tables:
+        for row in tb.rows:
+            for cell in row.cells:
+                t = (cell.text or "").strip()
+                if t:
+                    lines.append(t)
+    text = "\n".join(lines)
+    return {
+        "text": text,
+        "paragraphs": len(doc.paragraphs),
+        "tables": len(doc.tables),
+    }

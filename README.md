@@ -161,10 +161,13 @@ cd frontend && npm install && cd ..
 | --- | --- | --- |
 | `POST` | `/api/parse/requirement` | 同步调用上游 AI 解析，落库并计算缺失字段 |
 | `POST` | `/api/parse/stream` | SSE 流式版本，前端 `EventSource` / ReadableStream 消费 |
+| `POST` | `/api/parse/docx` | 从 `.docx` 提取纯文本（段落+表格），供需求录入回填 |
 | `POST` | `/api/parse/{id}/supplement` | 对解析结果补全缺失字段 |
-| `POST` | `/api/flows/static` | 创建静态采集任务并自动推进 8 阶段 |
+| `POST` | `/api/flows/static` | 创建静态采集任务并自动推进 8 阶段（`overrides.category` 写入快照，默认 `province`） |
+| `GET` | `/api/flows/static/list` | 离线采集任务列表（默认仅 `category=province`，支持 `q`/`status`/分页） |
 | `GET` | `/api/flows/{id}/static` | 查询任务 + 阶段 + 解析 + BDI 绑定 + 缺失字段 |
 | `POST` | `/api/flows/{id}/supplement` | 用户补全 BDI 入参后续跑 |
+| `POST` | `/api/flows/{id}/supplement/import-excel` | 上传 `.xlsx`，前两列按缺失字段路径回填（不落库，仅返回键值供前端合并） |
 | `GET` | `/api/mcp/tools` | 列出 MCP 工具注册表（unicom + BDI 5 个工具） |
 | `POST` | `/api/mcp/tools/{name}/call` | REST 形式调用 MCP 工具（协议未就位时的降级通道） |
 | `GET` | `/api/mcp/health` | 工具调用计数与健康 |
@@ -197,8 +200,11 @@ BDI_MOCK=1
 UNICOM_MOCK=1 BDI_MOCK=1 BDI_KEY=demo ./start-dev.sh
 ```
 
-浏览器访问 `http://localhost:5173/static-collect`，录入需求文本，左侧实时
-查看 8 阶段进度，右侧看到 AI 解析流式输出、缺失字段补全面板与 BDI 执行回执。
+浏览器访问 `http://localhost:5173/offline-collect`（省分个采操作记录列表，每页 10 条）
+或 `http://localhost:5173/offline-collect/province`（录入页）：可录入需求、导入 Word（`.docx`）
+回填需求文本；缺失参数补全支持导入 Excel（`.xlsx` 前两列：字段路径、取值）批量回填后再提交。
+左侧实时查看 8 阶段进度，右侧为 AI 解析流式输出、补全面板与 BDI 执行回执。旧路径
+`/static-collect` 会重定向到 `/offline-collect/province`。
 
 ### 10.4 模块边界
 

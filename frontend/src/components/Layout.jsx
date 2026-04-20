@@ -20,7 +20,7 @@ import { getTheme, setTheme } from "../theme";
 
 const navItems = [
   { to: "/", end: true, label: "工作台", Icon: LayoutDashboard },
-  // “流程管理”作为目录分组，子菜单承载具体页面入口
+  // 「采集场景管理」目录分组：订单采集 / 离线采集 / 省分个采
   { to: "/params", label: "参数管理", Icon: Settings },
   { to: "/monitor", label: "监控中心", Icon: Activity },
   { to: "/topology", label: "全景大屏 3D", Icon: RadioTower },
@@ -31,7 +31,9 @@ const navItems = [
 const PAGE_TITLES = {
   "/": "工作台",
   "/flows": "订单采集管理",
-  "/static-collect": "静态采集（BDI）",
+  "/offline-collect": "离线采集",
+  "/offline-collect/province": "省分个采",
+  "/static-collect": "静态采集（重定向）",
   "/params": "参数管理",
   "/monitor": "监控中心",
   "/topology": "全景大屏 3D",
@@ -41,10 +43,18 @@ const PAGE_TITLES = {
 
 export default function Layout() {
   const { pathname } = useLocation();
-  const pageTitle = PAGE_TITLES[pathname] ?? "智能采集运营平台";
+  const pageTitle =
+    pathname.startsWith("/offline-collect/province")
+      ? "省分个采"
+      : pathname.startsWith("/offline-collect")
+        ? "离线采集"
+        : PAGE_TITLES[pathname] ?? "智能采集运营平台";
   const [theme, setThemeState] = useState(() => getTheme());
   const [flowsOpen, setFlowsOpen] = useState(
-    () => pathname.startsWith("/flows") || pathname.startsWith("/static-collect"),
+    () =>
+      pathname.startsWith("/flows") ||
+      pathname.startsWith("/offline-collect") ||
+      pathname.startsWith("/static-collect"),
   );
 
   useEffect(() => {
@@ -59,7 +69,11 @@ export default function Layout() {
   }, []);
 
   useEffect(() => {
-    if (pathname.startsWith("/flows") || pathname.startsWith("/static-collect"))
+    if (
+      pathname.startsWith("/flows") ||
+      pathname.startsWith("/offline-collect") ||
+      pathname.startsWith("/static-collect")
+    )
       setFlowsOpen(true);
   }, [pathname]);
 
@@ -91,7 +105,7 @@ export default function Layout() {
             >
               <span className="flex items-center gap-3">
                 <GitBranch className="h-5 w-5 shrink-0" aria-hidden />
-                流程管理
+                采集场景管理
               </span>
               {flowsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </button>
@@ -112,7 +126,8 @@ export default function Layout() {
                   订单采集管理
                 </NavLink>
                 <NavLink
-                  to="/static-collect"
+                  to="/offline-collect"
+                  end
                   className={({ isActive }) =>
                     [
                       "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
@@ -123,7 +138,21 @@ export default function Layout() {
                   }
                 >
                   <span className="h-2 w-2 rounded-full bg-emerald-300/70" aria-hidden />
-                  静态采集（BDI）
+                  离线采集
+                </NavLink>
+                <NavLink
+                  to="/offline-collect/province"
+                  className={({ isActive }) =>
+                    [
+                      "ml-4 flex items-center gap-3 rounded-lg border-l-2 border-slate-600 py-1.5 pl-3 pr-2 text-xs font-medium transition-colors",
+                      isActive
+                        ? "border-indigo-400 bg-indigo-600/90 text-white shadow-sm"
+                        : "border-transparent text-slate-400 hover:bg-slate-800 hover:text-white",
+                    ].join(" ")
+                  }
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-teal-300/80" aria-hidden />
+                  省分个采
                 </NavLink>
               </div>
             ) : null}

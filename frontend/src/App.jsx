@@ -5,6 +5,8 @@ import Layout from "./components/Layout";
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const FlowManager = lazy(() => import("./pages/FlowManager"));
 const StaticCollect = lazy(() => import("./pages/StaticCollect"));
+const OfflineCollectList = lazy(() => import("./pages/OfflineCollectList"));
+const ProvinceCollect = lazy(() => import("./pages/ProvinceCollect"));
 const ParamManager = lazy(() => import("./pages/ParamManager"));
 const Monitor = lazy(() => import("./pages/Monitor"));
 const Knowledge = lazy(() => import("./pages/Knowledge"));
@@ -30,6 +32,8 @@ export default function App() {
         <Route path="/" element={<Layout />}>
           <Route index element={<Dashboard />} />
           <Route path="flows" element={<FlowManager />} />
+          <Route path="offline-collect" element={<OfflineCollectList />} />
+          <Route path="offline-collect/province" element={<ProvinceCollect />} />
           <Route path="static-collect" element={<StaticCollect />} />
           <Route path="params" element={<ParamManager />} />
           <Route path="monitor" element={<Monitor />} />

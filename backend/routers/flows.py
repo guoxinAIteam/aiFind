@@ -1,8 +1,9 @@
 import datetime
+import io
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -417,6 +418,63 @@ def list_tasks(
     }
 
 
+@router.get("/static/list")
+def list_static_tasks(
+    q: str = Query("", description="任务名或表名模糊检索"),
+    status: str = Query("", description="按状态筛选，空为全部"),
+    category: str = Query("province", description="子场景 category，存于 config_snapshot"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """离线采集（static_bdi）任务列表，默认仅省分个采（category=province）。"""
+    base = (
+        db.query(CollectTask)
+        .filter(CollectTask.scenario == "static_bdi")
+        .order_by(CollectTask.id.desc())
+    )
+    if status.strip():
+        base = base.filter(CollectTask.status == status.strip())
+    rows = base.all()
+    if category:
+        rows = [
+            t
+            for t in rows
+            if str((t.config_snapshot or {}).get("category") or "province") == category
+        ]
+    if q.strip():
+        like = q.strip().lower()
+        rows = [
+            t
+            for t in rows
+            if like in (t.name or "").lower() or like in (t.table_name or "").lower()
+        ]
+    total = len(rows)
+    total_pages = math.ceil(total / page_size) if page_size else 0
+    start = (page - 1) * page_size
+    slice_rows = rows[start : start + page_size]
+    return {
+        "items": [
+            {
+                "id": t.id,
+                "name": t.name,
+                "table_name": t.table_name,
+                "status": t.status,
+                "progress": t.progress or 0,
+                "stage": t.stage or "",
+                "scenario": t.scenario or "",
+                "category": (t.config_snapshot or {}).get("category") or "province",
+                "created_at": str(t.created_at) if t.created_at else None,
+            }
+            for t in slice_rows
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    }
+
+
 @router.post("")
 def create_task(req: CreateTaskReq, db: Session = Depends(get_db)):
     vars_dict = _build_vars_dict(req)
@@ -721,6 +779,42 @@ def _finalize_operations(step: FlowStep, status: str = "confirmed") -> None:
     ]
 
 
+def _xlsx_key_value_rows(content: bytes) -> List[Tuple[str, str]]:
+    """读取首个工作表前两列：字段路径、取值。首行可为表头（含 字段/field/path 等关键字则跳过）。"""
+    from openpyxl import load_workbook
+
+    bio = io.BytesIO(content)
+    wb = load_workbook(bio, read_only=True, data_only=True)
+    try:
+        ws = wb.active
+        raw: List[Tuple[str, str]] = []
+        for row in ws.iter_rows(min_row=1, max_col=2, values_only=True):
+            if not row:
+                continue
+            a, b = (row[0], row[1] if len(row) > 1 else None)
+            if a is None and b is None:
+                continue
+            k = str(a).strip() if a is not None else ""
+            if not k:
+                continue
+            if b is None:
+                v = ""
+            elif isinstance(b, float) and b == int(b):
+                v = str(int(b))
+            else:
+                v = str(b).strip()
+            raw.append((k, v))
+    finally:
+        wb.close()
+    if not raw:
+        return []
+    start = 0
+    h0 = raw[0][0].lower()
+    if any(x in h0 for x in ("field", "字段", "path", "参数名", "键", "key")):
+        start = 1
+    return raw[start:]
+
+
 @router.post("/static")
 def create_static_task(req: StaticCollectReq, db: Session = Depends(get_db)):
     """静态采集任务：接受需求文本，自动走 8 阶段。"""
@@ -728,9 +822,18 @@ def create_static_task(req: StaticCollectReq, db: Session = Depends(get_db)):
         raise HTTPException(400, "requirement 不能为空")
 
     now = datetime.datetime.utcnow()
+    raw_ov = dict(req.overrides or {})
+    category = str(raw_ov.pop("category", "province") or "province")
+    pipeline_req = StaticCollectReq(
+        name=req.name,
+        requirement=req.requirement,
+        overrides=raw_ov,
+        auto_execute=req.auto_execute,
+        user_name=req.user_name,
+    )
     task = CollectTask(
         name=req.name,
-        table_name=(req.overrides.get("table_name") or "").strip() or "pending",
+        table_name=(raw_ov.get("table_name") or "").strip() or "pending",
         task_type="static_bdi",
         scenario="static_bdi",
         stage=STAGE_ORDER[0],
@@ -739,7 +842,11 @@ def create_static_task(req: StaticCollectReq, db: Session = Depends(get_db)):
         current_step=1,
         progress=5,
         total_steps=len(STATIC_STAGE_TEMPLATES),
-        config_snapshot={"requirement": req.requirement, "overrides": req.overrides or {}},
+        config_snapshot={
+            "requirement": req.requirement,
+            "overrides": raw_ov,
+            "category": category,
+        },
     )
     db.add(task)
     db.flush()
@@ -763,10 +870,62 @@ def create_static_task(req: StaticCollectReq, db: Session = Depends(get_db)):
     db.refresh(task)
 
     if req.auto_execute:
-        _run_auto_pipeline(db, task, req)
+        _run_auto_pipeline(db, task, pipeline_req)
         db.refresh(task)
 
     return get_static_task_detail(task.id, db=db)
+
+
+@router.post("/{task_id}/supplement/import-excel")
+async def import_excel_for_supplement(
+    task_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """解析 Excel 前两列，仅返回与当前「未确认缺失字段」匹配的键值，供前端回填表单。"""
+    task = db.query(CollectTask).filter(CollectTask.id == task_id).first()
+    if not task:
+        raise HTTPException(404, "任务不存在")
+    if task.scenario != "static_bdi":
+        raise HTTPException(400, "该接口仅适用于 static_bdi 场景任务")
+    fn = (file.filename or "").lower()
+    if not fn.endswith((".xlsx", ".xlsm")):
+        raise HTTPException(400, "仅支持 .xlsx / .xlsm（不支持旧版 .xls）")
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "文件为空")
+    try:
+        pairs = _xlsx_key_value_rows(content)
+    except Exception as e:
+        raise HTTPException(400, f"解析 Excel 失败: {e}") from e
+
+    missing_rows = (
+        db.query(MissingField)
+        .filter(
+            MissingField.task_id == task_id,
+            MissingField.confirmed_at.is_(None),
+        )
+        .all()
+    )
+    allowed = {m.field_path for m in missing_rows}
+    values: Dict[str, Any] = {}
+    unknown: List[str] = []
+    for k, v in pairs:
+        if k in allowed:
+            values[k] = v
+        elif k:
+            unknown.append(k)
+    still_missing = [
+        m.field_path
+        for m in missing_rows
+        if m.field_path not in values or str(values.get(m.field_path, "")).strip() == ""
+    ]
+    return {
+        "values": values,
+        "matched_count": len(values),
+        "unknown_keys_in_file": unknown[:80],
+        "still_missing_after_import": still_missing,
+    }
 
 
 @router.post("/{task_id}/supplement")

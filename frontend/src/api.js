@@ -42,6 +42,23 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ values }),
       }),
+    supplementImportExcel: async (id, file) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      return request(`/flows/${id}/supplement/import-excel`, { method: "POST", body: fd });
+    },
+    listStatic: (params = {}) => {
+      const sp = new URLSearchParams();
+      if (params.q != null && String(params.q).trim()) sp.set("q", String(params.q).trim());
+      if (params.status != null && String(params.status).trim())
+        sp.set("status", String(params.status).trim());
+      if (params.category != null && String(params.category).trim())
+        sp.set("category", String(params.category).trim());
+      if (params.page != null) sp.set("page", String(params.page));
+      if (params.page_size != null) sp.set("page_size", String(params.page_size));
+      const qs = sp.toString();
+      return request(`/flows/static/list${qs ? `?${qs}` : ""}`);
+    },
   },
   parse: {
     requirement: (data) =>
@@ -59,6 +76,11 @@ export const api = {
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         body: JSON.stringify(data),
       }),
+    extractDocx: async (file) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      return request("/parse/docx", { method: "POST", body: fd });
+    },
   },
   doc: {
     parse: async (file) => {
